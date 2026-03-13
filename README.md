@@ -1,22 +1,47 @@
-# Swaraj AI: Offline Multilingual Assistant for Budget Smartphones 🇮🇳
+# 🇮🇳 Swaraj AI (स्वराज AI)
+**Sovereign Offline AI for the Next Billion Users.**
 
-Swaraj AI is an offline "Sovereign AI" agent designed for India's ₹8,000 smartphone segment. By distilling massive cloud intelligence into a sub-1GB local model, we provide a high-performance voice assistant that works without internet, respects privacy, and understands regional vernacular (Hinglish/Tanglish).
-
-## 🏗 High-Level Architecture
-Our system follows a **"Factory-Runtime-Bridge"** architecture, split across the AWS cloud and local Android device.
-
-### 🌐 The Cloud Factory (AWS)
-- **Data Teacher (Amazon Bedrock):** Uses Nova Premier to generate 10,000+ synthetic intent-action samples across regional personas.
-- **Training Ground (Amazon SageMaker):** Uses LoRA (Low-Rank Adaptation) to fine-tune a student model (Gemma 3 1B or Qwen 0.5B) to output deterministic JSON schemas.
-- **Shrinking Lab:** Models are quantized to GGUF (4-bit) to run on budget hardware.
-
-### 📱 The Offline Runtime (Android)
-- **The Listener (STT):** Uses AI4Bharat's **IndicConformer** for speech-to-text.
-- **The Thinker (SLM):** A local reasoning engine parses text into JSON intents.
-- **Serial Loading Logic:** To save RAM, the app uses a state machine to swap models in and out of memory sequentially.
-- **Action Executor (Bridge):** Android **Accessibility Services** translate JSON intents into physical UI interactions (clicks, scrolling, system toggles).
+Swaraj AI is a high-performance, **100% offline** voice assistant designed for budget Android smartphones (<4GB RAM). It bridges the digital divide for non-literate and disabled users by providing a "Hybrid Edge Intelligence" that understands regional Indian dialects (Hinglish, Tanglish, Manglish) and learns custom user routines locally.
 
 ---
+
+## 🏗️ Architecture: The Hybrid Edge Engine
+
+Swaraj AI uses a **"Relay Race" (Serial Loading)** strategy to overcome local hardware constraints.
+
+### 1. Fast-Path / System 1 (Reflex Memory)
+*   **Speed**: < 10ms | **RAM**: < 1MB
+*   Performs instant database lookups for custom user **Macros** (e.g., *"Danger"* -> [Call Police, Toggle Torch]).
+
+### 2. Slow-Path / System 2 (Reasoning Engine)
+*   **Speed**: ~1s | **RAM**: ~892MB
+*   Serially loads **Gemma 3 1B** (Quantized INT4) to parse complex natural language intent and irregular time/name slots.
+
+### 3. The Relay Race Lifecycle
+- **STT (IndicConformer)** -> [Unload] -> **Fast-Path Check** -> **SLM (Gemma 3)** -> [Unload] -> **Action (Accessibility)** -> **TTS (IndicTTS)** -> [Unload].
+
+---
+
+## 🏭 The Cloud Factory (Intelligence Manufacturing)
+
+Our intelligence is distilled using a Teacher-Student model distillation on AWS:
+*   **Teacher**: Amazon Bedrock (**Nova Premier**) synthesizes 20,000 high-fidelity regional command samples.
+*   **Student**: **Gemma 3 1B** is fine-tuned on this dataset via **LoRA** on Amazon SageMaker.
+*   **Quantization**: Optimized to INT4 (GGUF) for hyper-fast CPU execution on budget devices.
+
+---
+
+## 📁 Project Structure
+
+*   **/factory**: Cloud-side engineering (Bedrock synthesis, SageMaker LoRA training).
+*   **/mobile**: On-device Android runtime (Kotlin State Machine, Macro Database).
+*   **/docs**: Detailed architecture diagrams and pitch-ready strategy documents.
+*   **/data**: Training dataset and intent schemas.
+
+---
+
+## 🚀 Vision
+To empower every Indian citizen with **Sovereign AI** that respects their language, their privacy, and their hardware.
 
 ## 📂 Project Structure
 ```text

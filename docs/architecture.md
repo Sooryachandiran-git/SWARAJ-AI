@@ -1,39 +1,76 @@
-# Swaraj AI: Detailed Solution Architecture
+# Refined Swaraj AI Architecture: "The Hybrid Edge Intelligence"
 
-## 1. Problem Statement
-Budget smartphones in India (₹8k range) lack the RAM and connectivity to run modern AI assistants (Siri/Google) reliably. Users often rely on regional vernacular (Hinglish/Tanglish) which cloud models often misinterpret or latency makes unusable.
+This architecture uses the **"Fast Path / Slow Path"** pattern. It checks for a saved user macro first; if not found, it spins up the heavy AI model. This "Relay Race" strategy ensures maximum efficiency on budget hardware (<4GB RAM).
 
-## 2. Infrastructure (The AWS Factory)
-We treat the cloud as a manufacturing plant for "Intelligence Assets."
+---
 
-### A. Data Layer (Amazon Bedrock)
-- **Teacher Model:** Nova Premier.
-- **Role:** Generates synthetic intent mappings from raw speech transcripts. It understands the "Slang-to-JSON" conversion.
-- **Output:** 10,000 unit instruction dataset.
+## 1. High-Level Flow (End-to-End)
 
-### B. Training Layer (Amazon SageMaker)
-- **Base Model:** Qwen-2.5-0.5B (or Gemma 3 1B).
-- **Strategy:** Low-Rank Adaptation (LoRA).
-- **Validation:** We validate that the model outputs **Zero-Shot JSON** even for names it hasn't seen before by teaching it the "Position of Entity" (Slot-Filling logic).
+1.  **Voice Perception**: Offline STT (**IndicConformer**) captures audio and transcribes it to text.
+2.  **Fast-Path Check**: The system checks the **Local Macro DB (SQLite)**. If the text matches a saved trigger (e.g., "Safe"), it skips the AI and jumps to Step 4.
+3.  **Slow-Path Reasoning**: If no macro exists, **Gemma 3 1B** is loaded into RAM. It parses the text into a JSON Action Schema.
+4.  **Action Execution**: The **Action Router (Accessibility Service)** executes the physical UI clicks or system toggles.
+5.  **Success Check & Feedback**: The app verifies the toggle state change, generates a text response, and speaks it via **IndicTTS**.
 
-## 3. The On-Device Runtime (Sovereign AI)
-The user's data never leaves the phone. 100% Offline.
+---
 
-### A. Serial Loading State Machine
-Since budget phones have <4GB RAM, we cannot run STT and SLM concurrently.
-1. **State 1:** Load **IndicConformer** -> Hear Speech -> Transcription String.
-2. **State 2:** **Unload STT** -> Flush RAM -> Load **SLM**.
-3. **State 3:** SLM parses Text -> Deterministic JSON.
-4. **State 4:** **Unload SLM** -> Pass JSON to Action Executor.
+## 2. The On-Device "Relay Race" (RAM Management)
 
-### B. The Bridge (Accessibility Services)
-Standard Android apps are siloed. Swaraj AI uses Accessibility Bridge to:
-- Identify UI Nodes (Buttons, Toggles).
-- Simulate Clicks (e.g., Click "Call" button in WhatsApp).
-- Read Screen Context (e.g., "Is the flashlight currently ON?").
+To maintain the **4GB RAM Wall**, models are swapped serially:
 
-## 4. Key Performance Indicators (KPIs)
-- **Model Size:** 374MB (SLM) + 200MB (STT).
-- **RAM Usage:** ~550MB Peak.
-- **Privacy:** 0 bytes uploaded to cloud during runtime.
-- **Linguistic Coverage:** 22 Indian languages via IndicConformer + Synthetic Vernacular fine-tuning.
+| Phase | Component | RAM Action | RAM Load (Est.) |
+| :--- | :--- | :--- | :--- |
+| **Phase 1** | IndicConformer | LOAD, Transcribe, UNLOAD | ~200 MB |
+| **Phase 2** | Macro Matcher | Point-query SQLite Database | < 1 MB |
+| **Phase 3** | Gemma 3 1B | LOAD (if no macro), Reason, UNLOAD | ~892 MB |
+| **Phase 4** | Action Router | Physical execution via Accessibility | Minimal |
+| **Phase 5** | IndicTTS | LOAD, Generate Speech, UNLOAD | ~150 MB |
+
+---
+
+## 3. The "Cloud Factory" (Pre-Hackathon R&D)
+
+Before deployment, we use AWS to "distill" the intelligence:
+
+*   **Data Generation**: Amazon Bedrock (**Nova Premier**) generates **20,000 unique samples** of Hinglish/Tanglish/Manglish commands, including CREATE_MACRO intents.
+*   **Model Training**: Amazon SageMaker fine-tunes **Gemma 3 1B** on the generated dataset using **LoRA**.
+*   **Optimization**: The model is quantized to **INT4 (GGUF)** for hyper-fast mobile CPU inference.
+
+---
+
+## 4. Key Innovation: The Intent-to-Action Schema
+
+We use deterministic schemas to bridge the gap between human speech and Android system actions:
+
+*   **Basic Control**: `{"action": "TOGGLE", "target": "wifi", "state": "ON"}`
+*   **Contextual**: `{"action": "CALL", "target": "Suresh"}`
+*   **Macro Setup**: 
+    ```json
+    {
+      "action": "CREATE_MACRO",
+      "trigger": "help",
+      "steps": [
+        {"action": "CALL", "target": "Son"},
+        {"action": "TOGGLE", "target": "torch"}
+      ]
+    }
+    ```
+
+---
+
+## 🛡️ Resilient Design: Hurdle Management
+
+### 1. The "IO Latency" Heartbeat
+To prevent the app from appearing "frozen" during a serial model swap (which can take 1-3s on slow storage), Swaraj AI uses:
+*   **Haptic Tick**: A physical pulse (vibration) the moment the SLM starts loading.
+*   **Shimmer Overlay**: A subtle visual feedback loop to bridge the "Dead Air" while data moves from storage to RAM.
+
+### 2. Semantic Anchoring (Accessibility)
+Traditional accessibility tools fail if a UI ID changes. Swaraj AI uses **Semantic Fallback**:
+*   If a specific `resource-id` is not found, the system scans the screen hierarchy for nodes matching the **Intent Keyword** (e.g., searching for text "Send" or content-description "Submit").
+*   This makes the assistant "Vision-Aware" and immune to app layout updates.
+
+### 3. Model Fallback (Plan A vs Plan B)
+The engine dynamically detects hardware capabilities at runtime:
+*   **Plan A**: Gemma-3-1B (Full Reasoning) for devices with >3GB free RAM.
+*   **Plan B**: Qwen-2.5-0.5B (Speed Optimized) for hyper-budget devices to prevent OS termination (LMK).
