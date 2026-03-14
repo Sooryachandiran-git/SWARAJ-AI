@@ -65,13 +65,27 @@ class SwarajAccessibilityService : AccessibilityService() {
      * Executes global system actions.
      */
     fun performGlobalAction(action: String): Boolean {
+        Log.i(TAG, "🎬 Global action: $action")
         return when (action.uppercase()) {
-            "BACK" -> performGlobalAction(GLOBAL_ACTION_BACK)
-            "HOME" -> performGlobalAction(GLOBAL_ACTION_HOME)
-            "RECENTS" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+            "BACK"          -> performGlobalAction(GLOBAL_ACTION_BACK)
+            "HOME"          -> performGlobalAction(GLOBAL_ACTION_HOME)
+            "RECENTS"       -> performGlobalAction(GLOBAL_ACTION_RECENTS)
             "NOTIFICATIONS" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
-            "SETTINGS" -> performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
-            else -> false
+            "SETTINGS"      -> performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+            "LOCK_SCREEN"   -> performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+            "SCREENSHOT"    -> {
+                // GLOBAL_ACTION_TAKE_SCREENSHOT requires API 28+
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)
+                } else {
+                    Log.w(TAG, "⚠️ Screenshot requires Android 9+")
+                    false
+                }
+            }
+            else -> {
+                Log.w(TAG, "⚠️ Unknown global action: $action")
+                false
+            }
         }
     }
 

@@ -29,16 +29,21 @@ class SwarajNativeSTTProvider(
     private var isListening = false
     // Cache best partial — used as fallback if onResults() returns empty (Samsung offline quirk)
     private var lastPartialResult = ""
-
+    // Guard: ensure onResult() is delivered EXACTLY ONCE per listen() session
+    private var hasDeliveredResult = false
 
     fun listen(onResult: (String) -> Unit) {
         if (isListening) {
             Log.w(TAG, "Already listening, ignoring duplicate call")
             return
         }
+        // Reset session state
+        lastPartialResult = ""
+        hasDeliveredResult = false
 
         // SpeechRecognizer MUST be created on the Main Thread
         android.os.Handler(android.os.Looper.getMainLooper()).post {
+
             try {
                 if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                     Log.e(TAG, "❌ SpeechRecognizer not available on this device")
@@ -97,26 +102,32 @@ class SwarajNativeSTTProvider(
                         val errorMsg = getErrorText(error)
                         Log.e(TAG, "⚠️ Voice error: $errorMsg (code $error)")
 
-                        // Samsung offline quirk: ERROR_NO_MATCH means the final
+                        // Samsung offline quirk: ERROR_NO_MATCH / ERROR_CLIENT means the final
                         // recognizer failed but we may have a good partial result.
-                        if (error == SpeechRecognizer.ERROR_NO_MATCH && lastPartialResult.length > 2) {
+                        if ((error == SpeechRecognizer.ERROR_NO_MATCH ||
+                             error == SpeechRecognizer.ERROR_CLIENT) &&
+                            lastPartialResult.length > 2 &&
+                            !hasDeliveredResult) {  // Only if we haven't already delivered a result
                             Log.i(TAG, "📝 Using partial fallback: \"$lastPartialResult\"")
+                            hasDeliveredResult = true
                             onResult(lastPartialResult)
                             return
                         }
 
-                        if (error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                        if (!hasDeliveredResult && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
                             onOutput?.invoke("⚠️ Voice error: $errorMsg")
                         }
-                        onResult("")
+                        if (!hasDeliveredResult) onResult("")
                     }
 
                     override fun onResults(results: Bundle?) {
                         isListening = false
+                        if (hasDeliveredResult) return  // Guard: ignore duplicate callbacks
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val text = matches?.firstOrNull()?.takeIf { it.length > 1 } 
-                            ?: lastPartialResult  // Fallback to best partial if final is empty
-                        Log.i(TAG, "📝 Recognised: \"$text\" (partial fallback: ${text == lastPartialResult})")
+                        val text = matches?.firstOrNull()?.takeIf { it.length > 1 }
+                            ?: lastPartialResult
+                        Log.i(TAG, "📝 Recognised: \"$text\"")
+                        hasDeliveredResult = true
                         onResult(text)
                     }
 
