@@ -21,44 +21,95 @@ class SwarajAccessibilityService : AccessibilityService() {
         var instance: SwarajAccessibilityService? = null
     }
 
+
+
+    private var isWakeWordActive = false
+    private val handler = Handler(Looper.getMainLooper())
+    
+    // Background engines for seamless execution
+    private var wakeSttProvider: SwarajNativeSTTProvider? = null
+    private var ttsProvider: SwarajTTSProvider? = null
+    private var backgroundEngine: SerialLoadingEngine? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.i(TAG, "✅ Swaraj Accessibility Service Connected")
         instance = this
-        // Configuration is handled via accessibility_service_config.xml
+        
+        ttsProvider = SwarajTTSProvider(this)
+        backgroundEngine = SerialLoadingEngine(
+            context = this,
+            onOutput = { Log.i(TAG, "Background Engine: $it") },
+            onStateChanged = { state -> 
+                if (state == SerialLoadingEngine.EngineState.IDLE && isWakeWordActive) {
+                    // Re-arm wake word detector when interaction finishes
+                    handler.postDelayed({ monitorAudio() }, 1000)
+                }
+            }
+        )
+        // Ensure GGUF model is available for background commands
+        backgroundEngine?.preWarm()
     }
 
-    private var isWakeWordActive = false
-    private val handler = Handler(Looper.getMainLooper())
-
     fun startWakeWordDetection() {
+        if (isWakeWordActive) return
         isWakeWordActive = true
+        wakeSttProvider = SwarajNativeSTTProvider(this)
         monitorAudio()
     }
 
     fun stopWakeWordDetection() {
         isWakeWordActive = false
+        wakeSttProvider?.stop()
+        wakeSttProvider = null
     }
 
     private fun monitorAudio() {
-        // Real-time wake-word detection would go here.
-        // Simulated timer removed to prevent unwanted app opening.
-        Log.d(TAG, "👂 Monitoring for 'Swaraj' (Active)")
+        if (!isWakeWordActive) return
+        
+        if (wakeSttProvider == null) {
+            wakeSttProvider = SwarajNativeSTTProvider(this, isWakeWordMode = true)
+        }
+
+        // CRITICAL BUG FIX: Do NOT try to listen for wake word if the AI is currently processing a command. 
+        // This stops two SpeechRecognizers from accessing the mic at the exact same time, breaking both and causing a 'beep' loop!
+        if (backgroundEngine?.currentState != SerialLoadingEngine.EngineState.IDLE) {
+            Log.d(TAG, "⏸️ Background engine busy. Pausing wake word detector.")
+            // It will be re-armed automatically by the backgroundEngine's onStateChanged callback!
+            return
+        }
+
+        Log.d(TAG, "👂 Monitoring for Wake Word (Active)")
+        
+        wakeSttProvider?.listen { text ->
+             val lower = text.lowercase()
+             if (lower.contains("swaraj") || lower.contains("suraj") || 
+                 lower.contains("shivaji") || lower.contains("siraj")) {
+                  onWakeWordDetected()
+             } else {
+                  // Restart listening silently if wake word wasn't heard or an error happened
+                  if (isWakeWordActive && backgroundEngine?.currentState == SerialLoadingEngine.EngineState.IDLE) {
+                      handler.postDelayed({ monitorAudio() }, 200)
+                  }
+             }
+        }
     }
 
     private fun onWakeWordDetected() {
         Log.i(TAG, "🎯 WAKE WORD DETECTED: 'Swaraj'")
         
-        // Use a single intent to trigger main activity instead of new engine instance
-        val intent = Intent(this, com.swarajai.MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra("VOICE_TRIGGER", true)
-        }
-        startActivity(intent)
+        // CRITICAL BUG FIX (Only Works Once bug):
+        // We MUST unload/destroy the WakeWord STT instance completely.
+        // If we only call stop(), it still holds a system lock on the Android Microphone hardware,
+        // which completely blocks the backgroundEngine from capturing your voice the second time!
+        wakeSttProvider?.unload()
+        wakeSttProvider = null
         
-        // Re-arm the detector after the interaction completes (simulated)
-        handler.postDelayed({ monitorAudio() }, 20000)
+        ttsProvider?.speak("Yes, listening") {
+            // Run the main voice interaction entirely in the background!
+            // This prevents MainActivity from opening and ruining the screenshot.
+            backgroundEngine?.startInteraction()
+        }
     }
 
     /**

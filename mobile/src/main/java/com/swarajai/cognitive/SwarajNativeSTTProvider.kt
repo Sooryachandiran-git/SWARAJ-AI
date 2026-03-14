@@ -22,7 +22,8 @@ import android.util.Log
  */
 class SwarajNativeSTTProvider(
     private val context: Context,
-    private val onOutput: ((String) -> Unit)? = null
+    private val onOutput: ((String) -> Unit)? = null,
+    private val isWakeWordMode: Boolean = false
 ) {
     private val TAG = "NativeSTT"
     private var speechRecognizer: SpeechRecognizer? = null
@@ -47,7 +48,7 @@ class SwarajNativeSTTProvider(
             try {
                 if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                     Log.e(TAG, "❌ SpeechRecognizer not available on this device")
-                    onOutput?.invoke("❌ Voice recognition not available")
+                    if (!isWakeWordMode) onOutput?.invoke("❌ Voice recognition not available")
                     onResult("")
                     return@post
                 }
@@ -63,7 +64,6 @@ class SwarajNativeSTTProvider(
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
 
                     // Additional: Hindi (hi-IN) for Hinglish, Tamil (ta-IN) for Tanglish
-                    // Android 10+ supports simultaneous multilingual recognition offline
                     putStringArrayListExtra(
                         "android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES",
                         arrayListOf("hi-IN", "ta-IN")
@@ -72,9 +72,17 @@ class SwarajNativeSTTProvider(
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     // Force on-device offline recognition
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                    // Faster end-of-speech detection
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000)
+                    
+                    if (isWakeWordMode) {
+                        // In background wake word mode, wait very long before timing out
+                        // so Android doesn't stop/start repeatedly and make beep sounds constantly!
+                        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
+                        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
+                    } else {
+                        // User command mode: Faster end-of-speech detection
+                        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
+                    }
                 }
 
                 speechRecognizer?.setRecognitionListener(object : RecognitionListener {

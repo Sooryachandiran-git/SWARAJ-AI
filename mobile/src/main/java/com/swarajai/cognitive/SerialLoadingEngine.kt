@@ -110,19 +110,31 @@ class SerialLoadingEngine(
 
                         onOutput?.invoke("🗣️ Captured: \"$transcription\"")
 
-                        // PHASE 1 -> PHASE 2 HANDOVER:
-                        // Stop the SpeechService audio thread (frees microphone + audio buffer)
-                        // but KEEP the 42MB Vosk model in RAM for quick next use.
-                        sttProvider.stop()
-                        onOutput?.invoke("🧠 Swapping to LLM Brain...")
+                        // FAST PATH OPTIMIZATION: 0ms Latency
+                        // Try matching command statically before loading the heavy 379MB LLM.
+                        onOutput?.invoke("⚡ Analysing command instantly...")
+                        val fastIntent = FastPathEngine.tryResolve(cleanTranscript)
 
-                        // 500ms safety buffer — gives OS time to fully close audio device
-                        // before llama.cpp's JNI layer tries to allocate its context.
-                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            startCognitionPhase(transcription)
-                        }, 500)
+                        if (fastIntent != null) {
+                            onOutput?.invoke("🤖 Intent: $fastIntent (✨ Instant)")
+                            // Skip STT stop wait, execute immediately
+                            sttProvider.stop()
+                            executeActionPhase(fastIntent)
+                        } else {
+                            // FAST PATH FAILED -> PHASE 1 -> PHASE 2 HANDOVER:
+                            // We need full LLM cognition.
+                            sttProvider.stop()
+                            onOutput?.invoke("🧠 Swapping to LLM Brain... (~20s)")
+
+                            // 500ms safety buffer — gives OS time to fully close audio device
+                            // before llama.cpp's JNI layer tries to allocate its context.
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                startCognitionPhase(transcription)
+                            }, 500)
+                        }
                     }
                 }
+
             } else {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     onOutput?.invoke("❌ Error: Offline Ear failed to sync.")
@@ -198,8 +210,8 @@ class SerialLoadingEngine(
         }
     }
 
-    private var currentState: EngineState = EngineState.IDLE
-        set(value) {
+    var currentState: EngineState = EngineState.IDLE
+        private set(value) {
             field = value
             onStateChanged?.invoke(value)
         }
