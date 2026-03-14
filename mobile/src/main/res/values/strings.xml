@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Swaraj AI</string>
+    <string name="accessibility_service_description">Swaraj AI assists you in controlling your device using voice commands in regional languages.</string>
+</resources>

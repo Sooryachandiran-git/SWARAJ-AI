@@ -21,26 +21,31 @@ class ActionVerifier(private val context: Context) {
         return try {
             val json = JSONObject(schema)
             val intent = json.optJSONObject("intent") ?: json 
-            val action = intent.getString("action")
-            val target = intent.getString("target").lowercase()
+            
+            var action = intent.optString("action")
+            var target = intent.optString("target").lowercase()
+            var state = intent.optString("value").uppercase()
+
+            // Prototype alignment
+            if (action == "system_toggle") {
+                action = "TOGGLE_DEVICE"
+                target = "flashlight"
+            }
+            if (intent.has("state") && state.isEmpty()) {
+                state = intent.getString("state").uppercase()
+            }
 
             if (!hardwareExecutionSuccess) return getTemplate("error", target)
 
             // Hardware-specific verification + Template mapping
-            return when (target) {
-                "wifi" -> {
-                    val status = if (verifyWifi()) "ON" else "OFF"
-                    getTemplate("wifi", status)
-                }
-                "flashlight", "torch" -> getTemplate("torch", "TOGGLE")
-                "bluetooth" -> {
-                    val status = if (verifyBluetooth()) "ACTIVE" else "DISABLED"
-                    getTemplate("bluetooth", status)
-                }
-                "call" -> getTemplate("call", "SUCCESS")
-                "whatsapp" -> getTemplate("whatsapp", "SUCCESS")
-                "alarm" -> getTemplate("alarm", "SUCCESS")
-                "macro" -> getTemplate("macro", "SAVE")
+            return when (action) {
+                "TOGGLE_DEVICE" -> getTemplate("device", "${target.uppercase()}-$state")
+                "CHECK_STATUS" -> getTemplate("status", target.uppercase())
+                "OPEN_APP" -> getTemplate("app", "OPEN")
+                "WHATSAPP" -> getTemplate("whatsapp", "SUCCESS")
+                "CALL" -> getTemplate("call", "SUCCESS")
+                "SYSTEM_NAV" -> getTemplate("nav", target.uppercase())
+                "MATH_CALC" -> getTemplate("math", "DONE")
                 else -> getTemplate("generic", "SUCCESS")
             }
         } catch (e: Exception) {
@@ -48,26 +53,24 @@ class ActionVerifier(private val context: Context) {
         }
     }
 
-    /**
-     * 💡 LINGUISTIC LOOKUP: 
-     * Handles all primary Swaraj AI intent categories.
-     * These strings can be instantly swapped for regional dialects.
-     */
     private fun getTemplate(category: String, state: String): String {
         val responses = mapOf(
-            "wifi_ON" to "Swaraj: WiFi is now active.",
-            "wifi_OFF" to "Swaraj: WiFi has been disabled.",
-            "torch_TOGGLE" to "Swaraj: I have toggled your flashlight.",
-            "bluetooth_ACTIVE" to "Swaraj: Bluetooth is now scanning for devices.",
-            "call_SUCCESS" to "Swaraj: Connecting your call now.",
-            "whatsapp_SUCCESS" to "Swaraj: Opening your WhatsApp chat.",
-            "alarm_SUCCESS" to "Swaraj: Your alarm has been set successfully.",
-            "macro_SAVE" to "Swaraj: Your custom routine has been saved locally.",
-            "error_wifi" to "Swaraj: I couldn't reach the WiFi settings.",
-            "generic_SUCCESS" to "Swaraj: Task completed successfully."
+            "device_FLASHLIGHT-ON" to "Swaraj: Flashlight is now on.",
+            "device_FLASHLIGHT-OFF" to "Swaraj: Flashlight is now off.",
+            "device_WIFI-ON" to "Swaraj: WiFi connected.",
+            "device_WIFI-OFF" to "Swaraj: WiFi disconnected.",
+            "status_BATTERY" to "Swaraj: Your battery is healthy.",
+            "app_OPEN" to "Swaraj: Opening the requested application.",
+            "whatsapp_SUCCESS" to "Swaraj: Sending your message now.",
+            "call_SUCCESS" to "Swaraj: Initiating the call.",
+            "math_DONE" to "Swaraj: Here is the calculation result.",
+            "nav_BACK" to "Swaraj: Going back.",
+            "nav_HOME" to "Swaraj: Going to the home screen.",
+            "nav_SETTINGS" to "Swaraj: Opening settings.",
+            "generic_SUCCESS" to "Swaraj: Action performed successfully.",
+            "error_SYSTEM" to "Swaraj: I encountered an error performing that action."
         )
-        
-        val key = "${category}_${state}"
+        val key = "${category.lowercase()}_${state.uppercase()}"
         return responses[key] ?: responses["generic_SUCCESS"]!!
     }
 

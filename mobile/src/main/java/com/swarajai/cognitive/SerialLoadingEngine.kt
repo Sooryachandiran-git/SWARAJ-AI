@@ -2,179 +2,221 @@ package com.swarajai.cognitive
 
 import android.content.Context
 import android.util.Log
-import org.json.JSONObject
 
 /**
  * Swaraj AI: The "Relay Race" Runtime Engine
  * 
  * Optimized for 4GB RAM phones. Models are swapped serially:
  * STT -> [Fast Path Check] -> SLM (Reasoning) -> Action -> TTS
+ * 
+ * KEY INSIGHT:
+ * The model files are extracted from APK assets to internal storage.
+ * This extraction must ONLY happen once (on first run).
+ * If extraction happens every launch, we spike 800MB+ RAM -> OOM kill.
  */
-class SerialLoadingEngine(private val context: Context) {
+class SerialLoadingEngine(
+    private val context: Context,
+    private val onOutput: ((String) -> Unit)? = null,
+    private val onStateChanged: ((EngineState) -> Unit)? = null
+) {
 
     private val TAG = "SwarajEngine"
-    private val macroManager = MacroManager(context)
 
-    enum class EngineState { IDLE, LISTENING, THINKING, EXECUTING, SPEAKING }
-    private var currentState = EngineState.IDLE
+    private val sttProvider = SwarajNativeSTTProvider(context, onOutput)
+    private val llmProvider = LlamaInferenceProvider(context)
+    private val ttsProvider = SwarajTTSProvider(context)
+    private val accessibilityBridge = AccessibilityBridge(context)
+    private val actionVerifier = ActionVerifier(context)
 
     /**
-     * Entry Point: Triggered by wake-word or button
-     * Phase 1: Perception (IndicConformer)
+     * Called on app launch. Pre-warms Vosk model in background.
+     * This ensures first "Tap to Speak" is instant, not slow.
+     */
+    fun preWarm() {
+        // Native STT has no model to load — signal ready immediately on UI
+        onOutput?.invoke("⚙️ Swaraj AI starting up...")
+
+        // Pre-extract LLM model from APK assets in the background.
+        // 379MB extraction takes ~10-20s. By the time user taps, it's ready.
+        Thread {
+            android.util.Log.i(TAG, "🔥 Pre-extracting Swaraj Brain from APK assets...")
+            val internalModel = java.io.File(context.filesDir, "swaraj_brain.gguf")
+            
+            if (internalModel.exists() && internalModel.length() > 1_000_000) {
+                android.util.Log.i(TAG, "✅ Brain already extracted (${internalModel.length() / 1024 / 1024} MB). Ready.")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    onOutput?.invoke("✅ Swaraj AI Ready — Tap to Speak")
+                }
+                return@Thread
+            }
+
+            // Extract from APK assets (one-time operation)
+            try {
+                val assets = context.assets.list("models") ?: emptyArray()
+                if (assets.contains("swaraj_brain.gguf")) {
+                    android.util.Log.i(TAG, "📦 Extracting 379MB brain from APK... (first-time only)")
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        onOutput?.invoke("📦 First launch: Preparing AI Brain... (~30s)")
+                    }
+                    context.assets.open("models/swaraj_brain.gguf").use { input ->
+                        internalModel.outputStream().use { output ->
+                            input.copyTo(output, bufferSize = 8 * 1024 * 1024)
+                        }
+                    }
+                    android.util.Log.i(TAG, "✅ Brain extracted successfully!")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "❌ Brain extraction failed: ${e.message}")
+            }
+
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                onOutput?.invoke("✅ Swaraj AI Ready — Tap to Speak")
+            }
+        }.start()
+    }
+
+    /**
+     * Entry Point: User Trigger
+     * PHASE 1: STT
      */
     fun startInteraction() {
-        Log.i(TAG, "🏁 Relay Race Started - Phase 1: STT")
-        
-        loadModel(STT_MODEL_NAME)
-        currentState = EngineState.LISTENING
-        
-        // Simulating transcription output
-        val transcription = "whenever I say hospital call the doctor" 
-        
-        unloadModel(STT_MODEL_NAME) // 🚨 Clean RAM for next stage
-        
-        processText(transcription)
-    }
-
-    private fun processText(text: String) {
-        // PHASE 2: Fast-Path / System 1 Check (Latency: <10ms)
-        val macroActions = macroManager.checkFastPath(text)
-        if (macroActions != null) {
-            Log.i(TAG, "🚀 FAST-PATH: Instant Macro execution starting...")
-            executeActions(macroActions)
+        if (currentState != EngineState.IDLE) {
+            Log.w(TAG, "⚠️ startInteraction() ignored — engine is $currentState")
             return
         }
-
-        // PHASE 3: Slow-Path / System 2 Reasoning (Gemma 3 1B / Qwen 0.5B)
-        Log.i(TAG, "🧠 SLOW-PATH: Initializing reasoning engine...")
         
-        // 💎 UX RESILIENCE: Handle IO Latency with a physical cue
-        triggerHapticPulse() 
-        showThinkingUI() 
+        Log.i(TAG, "🏁 Phase 1: Activating Offline Ear...")
+        onOutput?.invoke("⚡ Activating Offline Ear...")
+        triggerHapticPulse(100)
+        currentState = EngineState.LISTENING
 
-        // Strategy: Load the most capable model the hardware permits
-        val modelToLoad = if (isHigherEndDevice()) "gemma3_1b.gguf" else "qwen2.5_0.5b.gguf"
-        
-        loadModel(modelToLoad) 
-        currentState = EngineState.THINKING
-        
-        val slmOutput = simulateSLMReasoning(text) 
-        
-        unloadModel(modelToLoad) // 🚨 Vital: Release ~900MB RAM immediately
-        
-        handleSLMResult(slmOutput)
-    }
+        // Model is already pre-warmed - load() returns immediately if model != null
+        sttProvider.load { success ->
+            if (success) {
+                sttProvider.listen { transcription ->
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        val cleanTranscript = transcription.trim().lowercase()
+                        
+                        // NOISE FILTER
+                        if (cleanTranscript.length < 3 || 
+                            cleanTranscript == "है" || 
+                            cleanTranscript == "हैं" ||
+                            cleanTranscript == "the" ||
+                            cleanTranscript == "a") {
+                            Log.w(TAG, "🔇 Filtered noise: \"$transcription\"")
+                            currentState = EngineState.IDLE
+                            return@post
+                        }
 
-    /**
-     * UX Heartbeat: Prevents the app from feeling "frozen" during IO load (Phase 3).
-     */
-    private fun triggerHapticPulse() {
-        // Implementation for haptic ticking or short vibration
-        // Log.d(TAG, "📳 Haptic pulse triggered - Smoothing IO latency")
-    }
+                        onOutput?.invoke("🗣️ Captured: \"$transcription\"")
 
-    private fun showThinkingUI() {
-        // Logic to show a shimmer or "Swaraj is thinking..." overlay
-    }
+                        // PHASE 1 -> PHASE 2 HANDOVER:
+                        // Stop the SpeechService audio thread (frees microphone + audio buffer)
+                        // but KEEP the 42MB Vosk model in RAM for quick next use.
+                        sttProvider.stop()
+                        onOutput?.invoke("🧠 Swapping to LLM Brain...")
 
-    private fun isHigherEndDevice(): Boolean {
-        // Check RAM and CPU to decide between Plan A (1B) or Plan B (0.5B)
-        return true 
-    }
-
-    private fun handleSLMResult(jsonResult: String) {
-        val json = JSONObject(jsonResult)
-        val intent = json.getJSONObject("intent")
-        val action = intent.getString("action")
-
-        if (action == "CREATE_MACRO") {
-            val trigger = intent.getString("trigger")
-            val steps = intent.getJSONArray("steps").toString()
-            
-            // Check if it already exists before saving
-            val saved = macroManager.saveMacro(trigger, steps)
-            
-            if (saved) {
-                provideFeedback(getTemplateFor("macro_SAVE", trigger))
-                println("💾 Macro Saved: $trigger")
+                        // 500ms safety buffer — gives OS time to fully close audio device
+                        // before llama.cpp's JNI layer tries to allocate its context.
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            startCognitionPhase(transcription)
+                        }, 500)
+                    }
+                }
             } else {
-                provideFeedback("Swaraj: A macro with the word $trigger already exists.")
-                println("⚠️ Macro Duplicate: $trigger")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    onOutput?.invoke("❌ Error: Offline Ear failed to sync.")
+                    currentState = EngineState.IDLE
+                }
             }
-        } else {
-            executeActions(jsonResult)
         }
     }
 
     /**
-     * PHASE 4: Action Execution & Verification
+     * PHASE 2: Cognitive Reasoning (Offline LLM)
      */
-    private fun executeActions(actionSchema: String) {
-        currentState = EngineState.EXECUTING
-        Log.i(TAG, "🎬 Action Router: Executing...")
+    private fun startCognitionPhase(text: String) {
+        onOutput?.invoke("\n🧠 Swaraj Brain Activating...")
+        onOutput?.invoke("📄 Processing: \"$text\"")
+        Log.i(TAG, "🧠 Phase 2: Starting offline cognition for: $text")
+        currentState = EngineState.THINKING
+        triggerHapticPulse(50, 2)
 
-        // 1. Physical Toggle (via Accessibility or System API)
-        val success = accessibilityBridge.execute(actionSchema)
+        // CRITICAL: Run ENTIRELY on a background thread.
+        // Never block the main thread with LLM loading (causes ANR/crash).
+        Thread {
+            try {
+                onOutput?.invoke("⚙️ Loading reasoning engine...")
+                llmProvider.load()
 
-        // 2. Verification Loop: Did the state actually change?
-        val verificationMessage = actionVerifier.verify(actionSchema, success)
-        
-        // 3. Move to Final Phase
-        generateAndSpeakResponse(verificationMessage)
+                onOutput?.invoke("⚡ Reasoning offline...")
+                val intentJson = llmProvider.reason(text)
+                onOutput?.invoke("🤖 Intent: $intentJson")
+
+                // Free LLM memory now that reasoning is done
+                llmProvider.unload()
+                
+                // Return to Main Thread for UI + Actions
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    if (intentJson.isEmpty() || intentJson == "{}") {
+                        startSynthesisPhase("Sorry, I couldn't understand that command.")
+                        return@post
+                    }
+                    executeActionPhase(intentJson)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ LLM Phase Error: ${e.message}")
+                llmProvider.unload()
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    startSynthesisPhase("I'm having trouble processing that. Please try again.")
+                }
+            }
+        }.start()
     }
 
     /**
-     * PHASE 5: Response Generation & TTS Feedback
+     * PHASE 3: Action Execution & Verification
      */
-    private fun generateAndSpeakResponse(message: String) {
+    private fun executeActionPhase(actionSchema: String) {
+        Log.i(TAG, "🎬 Phase 3: Executing action: $actionSchema")
+        currentState = EngineState.EXECUTING
+
+        val executionSuccess = accessibilityBridge.execute(actionSchema)
+        val feedbackText = actionVerifier.verify(actionSchema, executionSuccess)
+        
+        startSynthesisPhase(feedbackText)
+    }
+
+    /**
+     * PHASE 4: TTS Feedback
+     */
+    private fun startSynthesisPhase(feedback: String) {
         currentState = EngineState.SPEAKING
-        
-        // 💡 UX Strategy: We use a lightweight template rather than re-loading the SLM
-        // to save the 15-second "Thinking" delay for simple feedback.
-        val spokenText = "Swaraj: $message"
-        
-        Log.i(TAG, "📢 Loading IndicTTS Engine...")
-        loadModel(TTS_MODEL_NAME)
-        
-        ttsProvider.speak(spokenText) {
-            Log.i(TAG, "✅ Interaction Complete. Shutting down engines.")
-            unloadModel(TTS_MODEL_NAME)
+        ttsProvider.speak(feedback) {
+            Log.i(TAG, "✅ Interaction complete. Returning to IDLE.")
             currentState = EngineState.IDLE
         }
     }
 
-    // --- Core Component Bridges ---
-    
-    // In a real Android build, these are injected or initialized in onCreate
-    private val accessibilityBridge = AccessibilityBridge(context)
-    private val actionVerifier = ActionVerifier(context)
-    private val ttsProvider = IndicTTSProvider(context)
-    private val STT_MODEL_NAME = "indic_conformer_mobile.onnx"
-    private val TTS_MODEL_NAME = "indic_tts_male.onnx"
-
-    private fun loadModel(name: String) {
-        Log.d(TAG, "💾 LOADING: $name into RAM (Est. +800MB)")
-    }
-
-    private fun unloadModel(name: String) {
-        Log.d(TAG, "🗑️ UNLOADING: $name. RAM Cleared.")
-        System.gc() // Force GC for safety on budget hardware
-    }
-
-    private fun simulateSLMReasoning(text: String): String {
-        // This simulates the Gemma-3-1B output for a macro creation
-        return """
-        {
-          "text": "$text",
-          "intent": {
-            "action": "CREATE_MACRO",
-            "trigger": "hospital",
-            "steps": [
-              {"action": "CALL", "target": "Doctor"},
-              {"action": "TOGGLE", "target": "Torch"}
-            ]
-          }
+    private var currentState: EngineState = EngineState.IDLE
+        set(value) {
+            field = value
+            onStateChanged?.invoke(value)
         }
-        """.trimIndent()
+
+    enum class EngineState {
+        IDLE, LISTENING, THINKING, EXECUTING, SPEAKING
+    }
+
+    private fun triggerHapticPulse(duration: Long, count: Int = 1) {
+        try {
+            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            if (vibrator.hasVibrator()) {
+                repeat(count) {
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(duration, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                    Thread.sleep(duration + 50)
+                }
+            }
+        } catch (e: Exception) { /* IGNORE */ }
     }
 }

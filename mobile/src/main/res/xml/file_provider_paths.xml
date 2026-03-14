@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Expose app's internal files directory for FileProvider (for llamacpp ContentResolver) -->
+    <files-path name="model_files" path="." />
+</paths>

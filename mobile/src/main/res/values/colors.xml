@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="swaraj_bg_start">#0F0C29</color>
+    <color name="swaraj_bg_mid">#302B63</color>
+    <color name="swaraj_bg_end">#24243E</color>
+    <color name="swaraj_saffron">#FF8F00</color>
+    <color name="swaraj_green">#00E676</color>
+    <color name="swaraj_white">#FFFFFF</color>
+    <color name="swaraj_glass_white">#1AFFFFFF</color>
+    <color name="swaraj_glass_stroke">#33FFFFFF</color>
+    <color name="swaraj_text_dim">#A0A0A0</color>
+</resources>

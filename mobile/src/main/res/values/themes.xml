@@ -1,0 +1,15 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.SwarajAI" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Primary brand color. -->
+        <item name="colorPrimary">@color/swaraj_green</item>
+        <item name="colorPrimaryVariant">@color/swaraj_bg_start</item>
+        <item name="colorOnPrimary">@color/swaraj_white</item>
+        <!-- Secondary brand color. -->
+        <item name="colorSecondary">@color/swaraj_saffron</item>
+        <item name="colorSecondaryVariant">@color/swaraj_saffron</item>
+        <item name="colorOnSecondary">@color/swaraj_white</item>
+        <!-- Status bar color. -->
+        <item name="android:statusBarColor">@color/swaraj_bg_start</item>
+        <!-- Customize your theme here. -->
+    </style>
+</resources>
